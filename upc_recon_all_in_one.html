@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>UPC Reconciliation — All‑in‑One (Scanner Gun + Camera + Photo)</title>
+<style>
+:root{--bg:#0b0b10;--panel:#141420;--muted:#8b8ba7;--text:#e9e9f4;--ok:#71d675;--bad:#ff6b6b;--warn:#f5c96a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+header{position:sticky;top:0;background:#151528;border-bottom:1px solid #23233a;padding:12px 16px}
+h1{margin:0;font-size:18px}
+main{padding:16px;display:grid;gap:16px}
+.card{background:var(--panel);border:1px solid #23233a;border-radius:12px;padding:14px;box-shadow:0 6px 20px rgba(0,0,0,0.25)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+input[type="file"],input[type="text"],button{width:100%;padding:12px;border-radius:10px;border:1px solid #2d2d48;background:#10101a;color:var(--text)}
+button{background:#1a1a2b;cursor:pointer}
+button.cta{background:linear-gradient(135deg,#0ea5e9,#22c55e);border:1px solid #0ea5e9;color:#071218;font-weight:700}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.stat{background:#0f0f1a;border:1px solid #25253e;border-radius:10px;padding:10px;text-align:center}
+.stat .label{color:var(--muted);font-size:12px}.stat .value{font-size:20px;font-weight:700;margin-top:4px}
+#log{max-height:240px;overflow:auto;font-size:13px}
+.logline{padding:6px 0;border-bottom:1px dashed #2a2a45}.logline:last-child{border-bottom:none}
+.hit{color:var(--ok)}.miss{color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{border-bottom:1px solid #23233a;padding:8px;text-align:left}
+.tag{font-size:11px;color:var(--muted);padding:2px 6px;border:1px solid #2b2b46;border-radius:6px}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tab{padding:8px 12px;border:1px solid #2b2b46;border-radius:999px;cursor:pointer;background:#0f0f1a}
+.tab.active{border-color:#0ea5e9;box-shadow:inset 0 0 0 1px #0ea5e9}
+.hidden{display:none !important}
+.videoWrap{position:relative;border-radius:12px;overflow:hidden;border:1px solid #2a2a45;background:#0a0a14}
+video{width:100%;height:auto;display:block}
+.toggle{display:flex;gap:8px;align-items:center}
+kbd{background:#0f0f1a;border:1px solid #2b2b46;border-radius:6px;padding:2px 6px}
+ul{margin:6px 0 0 18px}
+</style>
+</head>
+<body>
+<header>
+  <h1>UPC Reconciliation — All‑in‑One</h1>
+  <div style="margin-top:6px;font-size:12px;color:var(--muted)">Scanner Gun • Continuous Camera • Photo Mode — matches by 11‑digit key (checksum removed)</div>
+</header>
+<main>
+  <section class="card">
+    <div class="row">
+      <div>
+        <label class="tag">1) Load Inventory (CSV)</label>
+        <input id="fileInput" type="file" accept=".csv"/>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">
+          CSV needs a column named <code>UPC</code> or <code>Barcode</code>. Optional: <code>Description</code>, <code>BOH</code>.
+          We normalize UPCs to an 11‑digit key (drop checksum, handle EAN‑13 starting 0).
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnDemo">Load Tiny Demo</button>
+      <button id="btnReset">Reset All</button>
+      <button id="btnExport" class="cta">Download Remaining CSV</button>
+      <label class="toggle"><input type="checkbox" id="speedMode"/> <span class="tag">Speed Mode (faster, skips table redraw)</span></label>
+      <label class="toggle"><input type="checkbox" id="beepOnHit"/> <span class="tag">Beep on hit</span></label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="stats">
+      <div class="stat"><div class="label">Total</div><div id="statTotal" class="value">0</div></div>
+      <div class="stat"><div class="label">Found</div><div id="statFound" class="value">0</div></div>
+      <div class="stat"><div class="label">Remaining</div><div id="statRemain" class="value">0</div></div>
+      <div class="stat"><div class="label">Scan Rate</div><div id="statRate" class="value">0/min</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="tabs">
+      <div class="tab active" data-tab="gun">Scanner Gun</div>
+      <div class="tab" data-tab="camera">Continuous Camera</div>
+      <div class="tab" data-tab="photo">Photo Mode</div>
+    </div>
+
+    <!-- Scanner Gun -->
+    <div id="tab-gun">
+      <div class="row" style="margin-top:10px">
+        <input id="gunInput" type="text" placeholder="Focus here and scan (or type) — press Enter" inputmode="numeric" autocomplete="off"/>
+        <button id="btnGunSubmit">Enter</button>
+        <button id="btnUndo" class="warn">Undo Last</button>
+      </div>
+      <div style="margin-top:6px;color:var(--muted);font-size:12px">
+        Tips:
+        <ul>
+          <li>Most handheld scanners send digits + <kbd>Enter</kbd>. This box auto‑focuses for rapid scanning.</li>
+          <li>If your scanner appends a suffix (like Tab), set it to Enter in your scanner settings.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Continuous Camera -->
+    <div id="tab-camera" class="hidden">
+      <div class="videoWrap" style="margin-top:10px"><video id="video" playsinline muted></video></div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnStart">Start Camera</button>
+        <button id="btnStop">Stop Camera</button>
+      </div>
+      <div style="margin-top:6px;color:var(--muted);font-size:12px">
+        Requires https or http://localhost for permissions.
+      </div>
+    </div>
+
+    <!-- Photo Mode -->
+    <div id="tab-photo" class="hidden">
+      <div class="row" style="margin-top:10px">
+        <input id="photoInput" type="file" accept="image/*" capture="environment"/>
+      </div>
+      <div style="margin-top:6px;color:var(--muted);font-size:12px">
+        Take a clear photo of the barcode. We’ll decode and match by the 11‑digit key.
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="align-items:flex-start">
+      <div style="flex:2 1 300px">
+        <label class="tag">Inventory Preview (Remaining)</label>
+        <div style="max-height:300px;overflow:auto;border:1px solid #26263f;border-radius:10px">
+          <table id="tbl"><thead><tr><th>#</th><th>UPC (orig)</th><th>Key11</th><th>Description</th><th>BOH</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div style="flex:1 1 220px">
+        <label class="tag">Recent Scans</label>
+        <div id="log"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<audio id="beep" preload="auto">
+  <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABYAAAAAAABsb2wAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" type="audio/wav">
+</audio>
+
+<script>
+(function(){
+  const LS_KEY='upcAllOne_inv_v3'; const LS_FOUND='upcAllOne_found_v3';
+  const tblBody=document.querySelector('#tbl tbody'); const log=document.getElementById('log');
+  const statTotal=document.getElementById('statTotal'); const statFound=document.getElementById('statFound'); const statRemain=document.getElementById('statRemain'); const statRate=document.getElementById('statRate');
+  const speedModeEl=document.getElementById('speedMode'); const beepEl=document.getElementById('beepOnHit'); const beep=document.getElementById('beep');
+
+  const tabs=document.querySelectorAll('.tab');
+  const tabGun=document.getElementById('tab-gun'); const tabCamera=document.getElementById('tab-camera'); const tabPhoto=document.getElementById('tab-photo');
+  const gunInput=document.getElementById('gunInput');
+  const btnGunSubmit=document.getElementById('btnGunSubmit');
+  const btnUndo=document.getElementById('btnUndo');
+
+  const video=document.getElementById('video'); let stream=null; let detector=null;
+  let inventory=[]; // {upcOrig, key11, description, boh}
+  let index=new Map(); // key11 -> idx
+  let found=new Set();
+  let lastAction=null; // undo
+  let speedMode=false; let lastScanTs=0; let scanCountMin=0;
+
+  function digits(s){return String(s||'').replace(/[^0-9]/g,'');}
+  function toKey11(code){
+    code = digits(code);
+    if(code.length===13 && code.startsWith('0')) code = code.slice(1); // EAN-13 for UPC-A
+    if(code.length>=12) return code.slice(0,11); // strip checksum
+    if(code.length===11) return code;
+    return code; // fallback
+  }
+
+  function vibrate(p){ if('vibrate' in navigator) try{ navigator.vibrate(p); }catch{} }
+  function playBeep(){ if(beepEl.checked){ try{ beep.currentTime = 0; beep.play(); }catch{} } }
+
+  function logLine(msg,cls=''){
+    const d=document.createElement('div'); d.className='logline '+cls; d.textContent=msg; log.prepend(d);
+    while(log.children.length>200) log.removeChild(log.lastChild);
+  }
+
+  function rebuildIndex(){
+    index.clear();
+    for(let i=0;i<inventory.length;i++){ index.set(inventory[i].key11, i); }
+  }
+
+  function save(){ localStorage.setItem(LS_KEY, JSON.stringify(inventory)); localStorage.setItem(LS_FOUND, JSON.stringify(Array.from(found))); }
+  function load(){ try{
+    const inv=JSON.parse(localStorage.getItem(LS_KEY)||'[]'); const f=JSON.parse(localStorage.getItem(LS_FOUND)||'[]');
+    inventory=Array.isArray(inv)?inv:[]; found=new Set(Array.isArray(f)?f:[]);
+    if(found.size){ inventory = inventory.filter(it=>!found.has(it.key11)); }
+    rebuildIndex(); render(true);
+  }catch{} }
+
+  function render(full){
+    statTotal.textContent=(inventory.length + found.size).toLocaleString();
+    statFound.textContent=found.size.toLocaleString();
+    statRemain.textContent=inventory.length.toLocaleString();
+    if(!full || speedMode) return;
+    const rows = inventory.slice().sort((a,b)=> (a.description||'').localeCompare(b.description||'') || a.key11.localeCompare(b.key11));
+    tblBody.innerHTML='';
+    rows.forEach((it,i)=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td>${i+1}</td><td>${it.upcOrig}</td><td>${it.key11}</td><td>${escapeHtml(it.description||'')}</td><td>${it.boh||''}</td>`;
+      tblBody.appendChild(tr);
+    });
+  }
+  function escapeHtml(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));}
+
+  function onHit(it){
+    found.add(it.key11);
+    lastAction = {type:'remove', item:it};
+    save(); render(false);
+    logLine(`FOUND & REMOVED: ${it.upcOrig} → key11 ${it.key11} — ${it.description||''}`,'hit');
+    vibrate(60); playBeep();
+    scanCountMin++; statRate.textContent = `${scanCountMin}/min`; setTimeout(()=>{ scanCountMin=Math.max(0,scanCountMin-1); statRate.textContent=`${scanCountMin}/min`; }, 60000);
+  }
+
+  function onCode(raw){
+    const now=Date.now(); if(now - lastScanTs < 180) return; lastScanTs = now; // fast throttle for dupes
+    const key = toKey11(raw); if(!key) return;
+    if(index.has(key)){
+      const idx=index.get(key); const it=inventory[idx];
+      inventory.splice(idx,1); rebuildIndex();
+      onHit(it);
+    }else{
+      logLine(`NOT IN LIST: ${digits(raw)} (key11 ${key})`,'miss');
+      vibrate([30,30]);
+    }
+  }
+
+  // Tabs
+  const allTabs = {gun:tabGun, camera:tabCamera, photo:tabPhoto};
+  document.querySelectorAll('.tab').forEach(t=>{
+    t.addEventListener('click', ()=>{
+      document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+      t.classList.add('active');
+      Object.values(allTabs).forEach(el=>el.classList.add('hidden'));
+      allTabs[t.dataset.tab].classList.remove('hidden');
+      if(t.dataset.tab==='gun') focusGun();
+    });
+  });
+
+  // Keep gun input always focused
+  function focusGun(){ setTimeout(()=>{ gunInput.focus(); gunInput.select && gunInput.select(); }, 0); }
+  gunInput.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); const v=gunInput.value.trim(); gunInput.value=''; if(v) onCode(v); focusGun(); }
+  });
+  btnGunSubmit.addEventListener('click', ()=>{
+    const v=gunInput.value.trim(); gunInput.value=''; if(v) onCode(v); focusGun();
+  });
+  setInterval(()=>{ if(document.activeElement !== gunInput && !tabGun.classList.contains('hidden')) focusGun(); }, 800);
+
+  // Undo
+  btnUndo.addEventListener('click', ()=>{
+    if(!lastAction || lastAction.type!=='remove') return;
+    inventory.push(lastAction.item); rebuildIndex();
+    found.delete(lastAction.item.key11); lastAction=null; save(); render(true);
+    logLine(`UNDO: Re-added ${lastAction?.item?.upcOrig || ''}`);
+  });
+
+  // Camera
+  document.getElementById('btnStart').addEventListener('click', ()=>{
+    navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}}).then(s=>{
+      stream=s; video.srcObject=s; video.play(); scanLoop();
+    }).catch(e=> logLine('Camera error: '+e.name+' — '+e.message,'miss'));
+  });
+  document.getElementById('btnStop').addEventListener('click', ()=>{ if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; } });
+  async function scanLoop(){
+    if(!('BarcodeDetector' in window)) { logLine('BarcodeDetector not supported. Use Gun or Photo mode.','miss'); return; }
+    detector = detector || new BarcodeDetector({formats:['ean_13','upc_a','upc_e','code_128','ean_8']});
+    const step = async()=>{
+      if(!stream) return;
+      try{
+        const codes = await detector.detect(video);
+        if(codes && codes.length){ onCode(codes[0].rawValue); }
+      }catch(e){}
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Photo mode
+  document.getElementById('photoInput').addEventListener('change', async (e)=>{
+    const f=e.target.files && e.target.files[0]; if(!f) return;
+    if(!('BarcodeDetector' in window)){ logLine('BarcodeDetector not supported. Use Gun mode.','miss'); return; }
+    const url=URL.createObjectURL(f); const img=new Image();
+    img.onload=async()=>{
+      try{
+        const det=new BarcodeDetector({formats:['ean_13','upc_a','upc_e','code_128','ean_8']});
+        const codes=await det.detect(img);
+        if(codes && codes.length){ onCode(codes[0].rawValue); } else { logLine('No barcode detected in photo. Try again.','miss'); }
+      }catch(e){ logLine('Scan error: '+e.message,'miss'); }
+      URL.revokeObjectURL(url);
+    };
+    img.onerror=()=>{ logLine('Could not load photo.','miss'); URL.revokeObjectURL(url); };
+    img.src=url;
+    e.target.value='';
+  });
+
+  // CSV handling
+  function splitCSVLine(line){ const out=[]; let cur=''; let inQ=false; for(let i=0;i<line.length;i++){ const ch=line[i];
+    if(ch=='"'){ if(inQ && line[i+1]=='"'){cur+='"'; i++;} else inQ=!inQ; } else if(ch==',' && !inQ){ out.push(cur); cur=''; } else { cur+=ch; } }
+    out.push(cur); return out;
+  }
+  function parseCSV(text){
+    const lines=text.split(/\r?\n/).filter(l=>l.trim().length);
+    if(!lines.length) return [];
+    const header=splitCSVLine(lines[0]).map(h=>h.trim().toLowerCase());
+    const upcIdx=header.findIndex(h=>['upc','barcode','bar code','code'].includes(h));
+    const descIdx=header.findIndex(h=>['description','name','product','item'].includes(h));
+    const bohIdx=header.findIndex(h=>h.includes('boh')||h.includes('on hand')||h.includes('qty'));
+    if(upcIdx===-1) throw new Error('CSV must include a UPC/Barcode column');
+    const items=[];
+    for(let i=1;i<lines.length;i++){
+      const cols=splitCSVLine(lines[i]);
+      const upcOrig=(cols[upcIdx]||'').trim();
+      const key11=toKey11(upcOrig);
+      if(!key11) continue;
+      items.push({upcOrig, key11, description:(cols[descIdx]||'').trim(), boh:(cols[bohIdx]||'').trim()});
+    }
+    return items;
+  }
+  document.getElementById('fileInput').addEventListener('change', async (e)=>{
+    const f=e.target.files && e.target.files[0]; if(!f) return;
+    const text=await f.text();
+    try{
+      inventory=parseCSV(text); found=new Set(); rebuildIndex(); save(); render(true);
+      logLine(`Loaded ${inventory.length} items from CSV.`);
+      focusGun();
+    }catch(err){ logLine('CSV error: '+err.message,'miss'); }
+  });
+  document.getElementById('btnDemo').addEventListener('click', ()=>{
+    inventory=[
+      {upcOrig:'05621933210', key11:toKey11('05621933210'), description:'Aerius Tabs 5mg 20', boh:'2'},
+      {upcOrig:'06210700490', key11:toKey11('06210700490'), description:'Advil Liqui-Gels 16', boh:'2'},
+      {upcOrig:'06260014252', key11:toKey11('06260014252'), description:'Tylenol Extra Strength 100s', boh:'4'},
+      {upcOrig:'03606000577732', key11:toKey11('03606000577732'), description:'CeraVe Gel Acne Control 40ml', boh:'1'}
+    ]; found=new Set(); rebuildIndex(); save(); render(true); logLine('Loaded demo list (4 items).'); focusGun();
+  });
+  document.getElementById('btnReset').addEventListener('click', ()=>{
+    localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_FOUND);
+    inventory=[]; found=new Set(); rebuildIndex(); render(true); logLine('All data cleared.');
+    focusGun();
+  });
+  document.getElementById('btnExport').addEventListener('click', ()=>{
+    const headers=['UPC','Key11','Description','BOH']; const rows=inventory.map(it=>[it.upcOrig,it.key11,it.description||'',it.boh||'']);
+    const csv=[headers.join(','), ...rows.map(r=>r.map(x=>`"${String(x).replace(/"/g,'""')}"`).join(','))].join('\n');
+    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'})); a.download='remaining_products.csv'; a.click();
+  });
+  speedModeEl.addEventListener('change', (e)=>{ speedMode = e.target.checked; if(!speedMode) render(true); });
+
+  // Init
+  load(); render(true); focusGun();
+})();
+</script>
+</body>
+</html>
